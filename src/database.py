@@ -1,22 +1,43 @@
 """
-Database v2.4 — IPV4 FIX (Supabase Pooler)
-Autodetects IPv6 issues and switches to IPv4 Pooler automatically.
+Database v2.5 — REGION BRUTEFORCE FIX
+Tries multiple Supabase Pooler regions to bypass IPv6/Network issues.
+Fixes 'invalid dsn' error by strictly handling secrets.
 """
 import psycopg2
 from psycopg2 import pool
 import os
 import logging
+import socket
 
 logger = logging.getLogger("OmniscienceDB")
 
-# User provided Direct URL (IPv6 only - Fails on Streamlit)
-DIRECT_URL = "postgresql://postgres:2-tnV9*skaSdFYw@db.ezuveunlxxruvuadmhxp.supabase.co:5432/postgres"
+# User Credentials
+DB_PASS = "2-tnV9*skaSdFYw"
+PROJECT_REF = "ezuveunlxxruvuadmhxp"
+DB_NAME = "postgres"
 
-# Derived IPv4 Pooler URL (Guessing Frankfurt Region based on history)
-# Format: postgres://[user].[project]:[pass]@[pooler_host]:6543/postgres
-# Project: ezuveunlxxruvuadmhxp
-# Region: aws-0-eu-central-1 (Frankfurt)
-IPV4_POOLER_URL = "postgresql://postgres.ezuveunlxxruvuadmhxp:2-tnV9*skaSdFYw@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
+# Candidate Connection Strings
+CANDIDATES = []
+
+# 1. IPv4 Poolers (Transaction Mode - Port 6543) - TRYING ALL COMMON REGIONS
+regions = [
+    "aws-0-eu-central-1", # Frankfurt (Most likely based on time)
+    "aws-0-us-east-1",    # N. Virginia
+    "aws-0-eu-west-1",    # Ireland
+    "aws-0-eu-west-2",    # London
+    "aws-0-eu-west-3",    # Paris
+    "aws-0-sa-east-1",    # Sao Paulo
+]
+
+for reg in regions:
+    host = f"{reg}.pooler.supabase.com"
+    # Pooler connection string: postgres://[user].[project]:[pass]@[host]:6543/[db]
+    dsn = f"postgresql://postgres.{PROJECT_REF}:{DB_PASS}@{host}:6543/{DB_NAME}?sslmode=require"
+    CANDIDATES.append((f"Pooler ({reg})", dsn))
+
+# 2. Direct Connection (IPv6 often fails on Cloud, but good to have)
+direct_dsn = f"postgresql://postgres:{DB_PASS}@db.{PROJECT_REF}.supabase.co:5432/{DB_NAME}?sslmode=require"
+CANDIDATES.append(("Direct IPv6", direct_dsn))
 
 class OddsBreakerDB:
     _instance = None
@@ -31,56 +52,80 @@ class OddsBreakerDB:
         if hasattr(self, 'postgreSQL_pool') and self.postgreSQL_pool:
             return
 
-        candidates = []
+        # Prepare candidates list
+        final_candidates = CANDIDATES.copy()
         
-        # Priority 1: Calculated IPv4 Pooler (Fixes "Cannot assign requested address")
-        candidates.append(("IPv4 Pooler (Frankfurt)", IPV4_POOLER_URL))
-        
-        # Priority 2: Direct URL (Original)
-        candidates.append(("Direct IPv6", DIRECT_URL))
-
-        # Priority 3: Secrets/Env
+        # Add Secrets (Safe Parsing)
         try:
             import streamlit as st
             if "postgres" in st.secrets:
                 s = st.secrets["postgres"]
-                if isinstance(s, dict): candidates.append(("Secrets", s.get("url")))
-                else: candidates.append(("Secrets", str(s)))
+                # DUCK TYPING: If it acts like a string, use it. If dict, get URL.
+                if isinstance(s, str):
+                    final_candidates.insert(0, ("Secret String", s))
+                elif hasattr(s, "get"):
+                    url = s.get("url")
+                    if url: final_candidates.insert(0, ("Secret Dict", url))
+                elif hasattr(s, "url"): # AttrDict
+                    final_candidates.insert(0, ("Secret Attr", s.url))
         except: pass
 
         self._initialized = False
         last_error = None
-        
-        for name, dsn in candidates:
-            if not dsn: continue
+        success_info = ""
+
+        # Connection Loop
+        for name, dsn in final_candidates:
             try:
-                # Cleanup
-                clean_dsn = dsn.strip().strip("'").strip('"')
+                # Sanitize
+                dsn = dsn.strip().strip("'").strip('"')
                 
-                logger.info(f"Connecting via {name}...")
+                # Check for Malformed DSN (The "missing =" error preventer)
+                if dsn.startswith("{") or "':" in dsn:
+                    logger.warning(f"Skipping malformed DSN in {name}")
+                    continue
+
+                logger.info(f"Trying connection: {name}...")
+                
+                # Attempt Connect
                 self.postgreSQL_pool = psycopg2.pool.SimpleConnectionPool(
-                    1, 20, clean_dsn, sslmode='require'
+                    1, 20, dsn
                 )
+                
+                # Verify
+                conn = self.postgreSQL_pool.getconn()
+                self.postgreSQL_pool.putconn(conn)
+                
                 logger.info(f"SUCCESS: Connected via {name}")
+                success_info = name
                 self._initialized = True
-                return
+                break # STOP LOOP ON SUCCESS
+                
             except Exception as e:
+                logger.warning(f"Failed {name}: {e}")
                 last_error = e
-                logger.warning(f"Failed via {name}: {e}")
                 continue
 
-        # Critical Failure Reporting
-        import streamlit as st
-        st.error(f"❌ Error Crítico de Conexión (IPv4/IPv6): {last_error}")
-        st.info("Diagnóstico: Streamlit Cloud usa IPv4. Supabase Direct usa IPv6. La corrección automática al Pooler (Puerto 6543) falló.")
-        st.warning("Solución Manual: Ve a Supabase -> Database -> Connect -> Connection String -> Cambia 'Mode' a 'Transaction' y copia esa URL.")
-        self._initialized = False
+        if not self._initialized:
+            import streamlit as st
+            st.error("❌ ERROR FATAL DE CONEXIÓN")
+            st.error(f"Último error: {last_error}")
+            st.write("📝 Log de intentos:")
+            for name, _ in final_candidates:
+                 st.write(f"- {name}: Falló")
+            st.stop()
+        else:
+            # Optional: Show success source in sidebar for debug
+            try:
+                import streamlit as st
+                if "debug" in st.query_params:
+                    st.sidebar.success(f"DB Conectada: {success_info}")
+            except: pass
 
     def get_connection(self):
-        if not self._initialized or not hasattr(self, 'postgreSQL_pool') or self.postgreSQL_pool is None:
-            self.initialize_pool()
+        if not self._initialized: self.initialize_pool()
         if not hasattr(self, 'postgreSQL_pool') or self.postgreSQL_pool is None:
-             raise Exception("Sin conexión a BD.")
+             raise Exception("Database broken.")
         return self.postgreSQL_pool.getconn()
 
     def return_connection(self, conn):
@@ -98,15 +143,15 @@ class OddsBreakerDB:
         finally:
             if conn: self.return_connection(conn)
 
-    # --- METHODS ---
+    # --- TABLES & LOGIC ---
     def create_tables(self):
-        queries = [
+        q = [
             "CREATE TABLE IF NOT EXISTS matches_historical (game_id BIGINT PRIMARY KEY, date DATE, home_team VARCHAR(255), away_team VARCHAR(255), home_score INT, away_score INT, league_name VARCHAR(255), odds_home FLOAT, odds_draw FLOAT, odds_away FLOAT, result VARCHAR(10));",
             "CREATE TABLE IF NOT EXISTS features_deep_data (game_id BIGINT REFERENCES matches_historical(game_id), home_minutes_load FLOAT, away_minutes_load FLOAT, home_motivation_score FLOAT, away_motivation_score FLOAT, home_days_rest INT, away_days_rest INT, wind_factor FLOAT, rain_factor FLOAT, home_attack_strength FLOAT, away_attack_strength FLOAT, home_defense_strength FLOAT, away_defense_strength FLOAT, home_form FLOAT, away_form FLOAT, PRIMARY KEY (game_id));",
             "CREATE TABLE IF NOT EXISTS odds_snapshots (snapshot_id SERIAL PRIMARY KEY, game_id BIGINT, captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, bookmaker VARCHAR(100), odds_home FLOAT, odds_draw FLOAT, odds_away FLOAT, implied_prob_home FLOAT, implied_prob_draw FLOAT, implied_prob_away FLOAT);",
             "CREATE TABLE IF NOT EXISTS bets_history (bet_id SERIAL PRIMARY KEY, game_id BIGINT REFERENCES matches_historical(game_id), placed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, selection VARCHAR(10), odds FLOAT, stake FLOAT, expected_value FLOAT, status VARCHAR(20) DEFAULT 'PENDING', pnl FLOAT DEFAULT 0.0, is_auto_bet BOOLEAN DEFAULT FALSE, learned BOOLEAN DEFAULT FALSE);",
         ]
-        for q in queries: self.execute_query(q)
+        for x in q: self.execute_query(x)
 
     def save_match_data(self, match_data: dict, deep_data: dict = None):
         try:
