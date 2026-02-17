@@ -478,8 +478,9 @@ elif menu == "🤖 AUTO-BET & LEARN":
                     res, lrn = abm.check_results_and_learn()
                 if lrn > 0:
                     st.success(f"✅ ¡Aprendizaje Instantáneo! La IA ha entrenado con {lrn} partidos finalizados de hoy.")
-                time.sleep(1) # Visual pause
-                st.rerun()
+                
+                # Persist success state
+                st.session_state['last_run_success'] = True
             else:
                 st.warning("No se encontraron nuevas oportunidades con suficiente valor hoy.")
 
