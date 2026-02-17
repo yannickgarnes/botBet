@@ -238,3 +238,4 @@ class OddsBreakerDB:
 
 if __name__ == "__main__":
     db = OddsBreakerDB()
+    db.create_tables()
