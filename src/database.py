@@ -34,14 +34,21 @@ class OddsBreakerDB:
             # 1. Streamlit Secrets (Recommended for Cloud)
             try:
                 import streamlit as st
+                # Check for nested [postgres] url = "..."
                 if "postgres" in st.secrets:
-                    # Check for 'url' key or simple string
-                    if isinstance(st.secrets["postgres"], dict) and "url" in st.secrets["postgres"]:
-                        dsn = st.secrets["postgres"]["url"]
-                    elif isinstance(st.secrets["postgres"], str):
-                        dsn = st.secrets["postgres"]
-            except Exception:
-                pass # Streamlit not installed or no secrets
+                    secret = st.secrets["postgres"]
+                    if isinstance(secret, dict) and "url" in secret:
+                        dsn = secret["url"]
+                        logger.info("Found DSN in st.secrets['postgres']['url']")
+                    elif isinstance(secret, str):
+                        dsn = secret
+                        logger.info("Found DSN in st.secrets['postgres'] (string)")
+                # Check for flat DATABASE_URL in secrets
+                elif "DATABASE_URL" in st.secrets:
+                    dsn = st.secrets["DATABASE_URL"]
+                    logger.info("Found DSN in st.secrets['DATABASE_URL']")
+            except Exception as e:
+                logger.warning(f"Secrets lookup failed: {e}")
 
             # 2. Environment Variable (Standard)
             if not dsn:
