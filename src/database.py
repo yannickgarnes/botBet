@@ -64,9 +64,11 @@ class OddsBreakerDB:
         if self.engine_type == 'postgres':
             return self.postgreSQL_pool.getconn()
         else:
-            # SQLite Connection
-            conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
+            # SQLite Connection (w/ Increased Timeout and WAL Mode for Concurrency)
+            conn = sqlite3.connect(self.sqlite_path, timeout=10.0, check_same_thread=False)
             conn.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrency
+            conn.execute("PRAGMA journal_mode=WAL;")
             return conn
 
     def return_connection(self, conn):
