@@ -433,6 +433,10 @@ elif menu == "🤖 AUTO-BET & LEARN":
     
     abm = AutoBetManager()
     
+    # DB Status Check
+    db_status = "☁️ CLOUD (Postgres)" if getattr(abm.db, 'engine_type', 'postgres') == 'postgres' else "💾 OFFLINE (Local SQLite)"
+    st.caption(f"Estado Base de Datos: **{db_status}**")
+    
     # Stats Row
     try:
         stats = abm.db.get_bets_stats() 
@@ -452,26 +456,32 @@ elif menu == "🤖 AUTO-BET & LEARN":
     except Exception as e:
         stats = (0, 0, 0, 0)
         st.error(f"⚠️ Error conectando a Base de Datos: {e}")
-        st.warning("Verifica tus secretos en Streamlit Cloud ([postgres] url = ...).")
         st.stop()
     
     c1, c2 = st.columns(2)
     
     with c1:
         st.subheader("1. Generación de Apuestas")
-        st.info("La IA escaneará los partidos de HOY y apostará si ve valor.")
+        st.info("Escaneará TODOS los partidos de HOY (incluso finalizados) para aprender rápido.")
         
         threshold = st.slider("Umbral de Valor (EV)", 0.05, 0.50, 0.15)
-        max_b = st.number_input("Máximo de Apuestas", 1, 20, 5)
+        max_b = st.number_input("Máximo de Apuestas", 1, 50, 10)
         
         if st.button("🚀 EJECUTAR AUTO-BET (HOY)"):
-            with st.spinner("Analizando mercado y calculando probabilidades..."):
+            with st.spinner("Analizando mercado, partidos finalizados y calculando probabilidades..."):
                 count = abm.generate_daily_bets(confidence_threshold=threshold, max_bets=max_b)
+            
             if count > 0:
-                st.success(f"¡Éxito! Se han colocado {count} nuevas apuestas automáticas.")
+                st.success(f"¡Éxito! Se han procesado {count} apuestas (Nuevas + Finalizadas).")
+                # Auto-trigger learning for instant gratification
+                with st.spinner("Procesando resultados inmediatos..."):
+                    res, lrn = abm.check_results_and_learn()
+                if lrn > 0:
+                    st.success(f"✅ ¡Aprendizaje Instantáneo! La IA ha entrenado con {lrn} partidos finalizados de hoy.")
+                time.sleep(1) # Visual pause
                 st.rerun()
             else:
-                st.warning("No se encontraron oportunidades con suficiente valor hoy.")
+                st.warning("No se encontraron nuevas oportunidades con suficiente valor hoy.")
 
     with c2:
         st.subheader("2. Verificación y Aprendizaje")
@@ -1460,13 +1470,3 @@ elif menu == "📘 MANUAL DE USUARIO":
 
     ---
 
-    ### 4. RESOLUCIÓN DE PROBLEMAS (TROUBLESHOOTING)
-
-    **Mensaje: "No se pudo recuperar la plantilla para este partido"**
-    *   **Causa**: Esto pasa en ligas menores (Femeninas, Reservas, 3ª División) donde 365Scores no publica alineaciones oficiales.
-    *   **Solución**: El sistema ignora el análisis de jugadores y solo te muestra el gráfico de **INTENSIDAD H2H**.
-    *   **Consejo**: Si no hay datos de plantilla, reduce tu confianza (Stake bajo). La IA está "ciega" en esa parte.
-    """)
-
-st.markdown("---")
-st.caption("ODDS-BREAKER PRO v3.0 | Engine: Omniscience LSTM + Dixon-Coles | UI: Bet365-Dark")
