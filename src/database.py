@@ -56,6 +56,7 @@ class OddsBreakerDB:
         import os
         self.sqlite_path = os.path.join(os.getcwd(), 'bets_history.db')
         self._initialized = True
+        self.create_tables() # ENSURE TABLES EXIST
 
     def get_connection(self):
         if not self._initialized: self.initialize_pool()
