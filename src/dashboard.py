@@ -499,25 +499,30 @@ elif menu == "🤖 AUTO-BET & LEARN":
             if resolved == 0 and learned == 0:
                 st.info("No hay apuestas pendientes de resolver por ahora.")
 
-    st.subheader("📝 Historial de Apuestas (Pendientes y Recientes)")
+    st.subheader("📝 Historial Reciente (Últimas 20)")
     
-    # Fetch pending for display
-    pending = abm.db.get_pending_bets()
-    if pending:
+    # Fetch recent for display (Pending + Finished)
+    recent = abm.db.get_recent_bets(limit=20)
+    if recent:
         data = []
-        for p in pending:
-            # (bet_id, game_id, selection, odds, stake, result, h, a)
+        for p in recent:
+            # (bet_id, game_id, selection, odds, stake, status, h, a, pnl)
+            # p[5] is status, p[8] is pnl
+            status_icon = "⏳"
+            if p[5] == "WON": status_icon = "✅"
+            elif p[5] == "LOST": status_icon = "❌"
+            
             data.append({
-                "ID": p[0],
                 "Partido": f"{p[6]} vs {p[7]}",
                 "Selección": p[2],
-                "Cuota": p[3],
-                "Stake": p[4],
-                "Estado": "PENDING"
+                "Cuota": f"{p[3]:.2f}",
+                "Stake": f"${p[4]:.2f}",
+                "Estado": f"{status_icon} {p[5]}",
+                "P/L": f"${p[8]:.2f}" if p[8] is not None else "$0.00"
             })
         st.table(pd.DataFrame(data))
     else:
-        st.caption("No hay apuestas activas en este momento.")
+        st.caption("No hay apuestas registradas todavía.")
 
 
 elif menu == "SIMULADOR (Backtest)":
