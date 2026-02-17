@@ -1,0 +1,198 @@
+[
+    {
+        "id": 1771010827211,
+        "date": "2026-02-13 20:27",
+        "match": "Real Madrid vs Barcelona + Girona vs Betis...",
+        "selection": "PARLEY: Real Madrid Win (Real Madrid vs Barcelona) | Girona Win (Girona vs Betis) | Valencia Win (Valencia vs Villarreal)",
+        "odds": 9.57,
+        "fair_prob": 0.125,
+        "stake": 50.0,
+        "type": "Parley (3 legs)",
+        "status": "PENDING",
+        "return": 0,
+        "legs": [
+            {
+                "id": 1771010822267,
+                "date": "2026-02-13 20:27",
+                "match": "Real Madrid vs Barcelona",
+                "selection": "Real Madrid Win",
+                "odds": 2.2,
+                "fair_prob": 0.5,
+                "stake": 10.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771010823128,
+                "date": "2026-02-13 20:27",
+                "match": "Girona vs Betis",
+                "selection": "Girona Win",
+                "odds": 1.5,
+                "fair_prob": 0.5,
+                "stake": 10.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771010824502,
+                "date": "2026-02-13 20:27",
+                "match": "Valencia vs Villarreal",
+                "selection": "Valencia Win",
+                "odds": 2.9,
+                "fair_prob": 0.5,
+                "stake": 10.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            }
+        ]
+    },
+    {
+        "id": 1771010830577,
+        "date": "2026-02-13 20:27",
+        "match": "Real Madrid vs Barcelona",
+        "selection": "Real Madrid Win",
+        "odds": 2.2,
+        "fair_prob": 0.5,
+        "stake": 10.0,
+        "type": "Single",
+        "status": "WON",
+        "return": 22.0
+    },
+    {
+        "id": 1771010831381,
+        "date": "2026-02-13 20:27",
+        "match": "Real Madrid vs Barcelona",
+        "selection": "Real Madrid Win",
+        "odds": 2.2,
+        "fair_prob": 0.5,
+        "stake": 10.0,
+        "type": "Single",
+        "status": "PENDING",
+        "return": 0
+    },
+    {
+        "id": 1771010833013,
+        "date": "2026-02-13 20:27",
+        "match": "Girona vs Betis",
+        "selection": "Girona Win",
+        "odds": 1.5,
+        "fair_prob": 0.5,
+        "stake": 10.0,
+        "type": "Single",
+        "status": "WON",
+        "return": 15.0
+    },
+    {
+        "id": 1771012713130,
+        "date": "2026-02-13 20:58",
+        "match": "Real Madrid vs Real Sociedad + Girona vs Barcelona...",
+        "selection": "PARLEY: Real Madrid Win (Real Madrid vs Real Sociedad) | Girona Win (Girona vs Barcelona) | Rayo Vallecano Win (Rayo Vallecano vs Atl\u00e9tico Madrid) | Getafe Win (Getafe vs Villarreal) | Sevilla Win (Sevilla vs Alav\u00e9s) | Mallorca Win (Mallorca vs Betis) | Over 9.5 Corners (Real Madrid vs Real Sociedad) | Over 9.5 Corners (Girona vs Barcelona)",
+        "odds": 10365.59,
+        "fair_prob": 0.0,
+        "stake": 50.0,
+        "type": "Parley (8 legs)",
+        "status": "PENDING",
+        "return": 0,
+        "legs": [
+            {
+                "id": 1771012639476,
+                "date": "2026-02-13 20:57",
+                "match": "Real Madrid vs Real Sociedad",
+                "selection": "Real Madrid Win",
+                "odds": 5.8,
+                "fair_prob": 0.0,
+                "stake": 50.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771012639476,
+                "date": "2026-02-13 20:57",
+                "match": "Girona vs Barcelona",
+                "selection": "Girona Win",
+                "odds": 3.8,
+                "fair_prob": 0.0,
+                "stake": 50.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771012639476,
+                "date": "2026-02-13 20:57",
+                "match": "Rayo Vallecano vs Atl\u00e9tico Madrid",
+                "selection": "Rayo Vallecano Win",
+                "odds": 4.5,
+                "fair_prob": 0.0,
+                "stake": 50.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771012639476,
+                "date": "2026-02-13 20:57",
+                "match": "Getafe vs Villarreal",
+                "selection": "Getafe Win",
+                "odds": 2.9,
+                "fair_prob": 0.0,
+                "stake": 50.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771012639476,
+                "date": "2026-02-13 20:57",
+                "match": "Sevilla vs Alav\u00e9s",
+                "selection": "Sevilla Win",
+                "odds": 3.9,
+                "fair_prob": 0.0,
+                "stake": 50.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771012639476,
+                "date": "2026-02-13 20:57",
+                "match": "Mallorca vs Betis",
+                "selection": "Mallorca Win",
+                "odds": 2.7,
+                "fair_prob": 0.0,
+                "stake": 50.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771012639476,
+                "date": "2026-02-13 20:57",
+                "match": "Real Madrid vs Real Sociedad",
+                "selection": "Over 9.5 Corners",
+                "odds": 1.85,
+                "fair_prob": 0.0,
+                "stake": 50.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            },
+            {
+                "id": 1771012639476,
+                "date": "2026-02-13 20:57",
+                "match": "Girona vs Barcelona",
+                "selection": "Over 9.5 Corners",
+                "odds": 1.85,
+                "fair_prob": 0.0,
+                "stake": 50.0,
+                "type": "Single",
+                "status": "PENDING",
+                "return": 0
+            }
+        ]
+    }
+]
