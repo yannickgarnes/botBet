@@ -70,9 +70,12 @@ class OddsBreakerDB:
                 logger.info("Connected to DB via Env Vars.")
 
             if self.postgreSQL_pool:
+                logger.info("Connection pool created successfully")
                 self._initialized = True
         except (Exception, psycopg2.DatabaseError) as error:
             logger.error(f"Error while connecting to PostgreSQL: {error}")
+            import streamlit as st
+            st.error(f"DEBUG: Connection Error: {error}")
             self._initialized = False
 
     def get_connection(self):
