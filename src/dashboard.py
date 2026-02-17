@@ -1470,3 +1470,13 @@ elif menu == "📘 MANUAL DE USUARIO":
 
     ---
 
+    ### 4. RESOLUCIÓN DE PROBLEMAS (TROUBLESHOOTING)
+
+    **Mensaje: "No se pudo recuperar la plantilla para este partido"**
+    *   **Causa**: Esto pasa en ligas menores (Femeninas, Reservas, 3ª División) donde 365Scores no publica alineaciones oficiales.
+    *   **Solución**: El sistema ignora el análisis de jugadores y solo te muestra el gráfico de **INTENSIDAD H2H**.
+    *   **Consejo**: Si no hay datos de plantilla, reduce tu confianza (Stake bajo). La IA está "ciega" en esa parte.
+    """)
+
+st.markdown("---")
+st.caption("ODDS-BREAKER PRO v3.0 | Engine: Omniscience LSTM + Dixon-Coles | UI: Bet365-Dark")
