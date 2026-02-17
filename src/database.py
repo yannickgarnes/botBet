@@ -153,22 +153,44 @@ class OddsBreakerDB:
     def save_match_data(self, match_data: dict, deep_data: dict = None):
         # Robust Upsert
         if self.engine_type == 'sqlite':
-             # SQLite Upsert
-             self.execute_query("""
-                INSERT INTO matches_historical (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT(game_id) DO UPDATE SET 
-                home_score=excluded.home_score, away_score=excluded.away_score, result=excluded.result
-             """, (
-                 match_data.get("game_id"), match_data.get("date"), 
-                 match_data.get("home_team"), match_data.get("away_team"), 
-                 match_data.get("home_score"), match_data.get("away_score"), 
-                 match_data.get("league_name"), 
-                 match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), 
-                 match_data.get("result")
-             ))
+            # SQLite Strategy: INSERT OR IGNORE then UPDATE (to avoid syntax errors on older versions)
+            # Or just REPLACE INTO (Simple, but keys might change? No, game_id is key).
+            # REPLACE INTO matches_historical ... works but might affect FKs if ON DELETE CASCADE.
+            # Safe approach: INSERT OR IGNORE, then UPDATE.
+            
+            c = self.get_connection().cursor()
+            try:
+                # 1. Try Insert
+                c.execute("""
+                    INSERT OR IGNORE INTO matches_historical 
+                    (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    match_data.get("game_id"), match_data.get("date"), 
+                    match_data.get("home_team"), match_data.get("away_team"), 
+                    match_data.get("home_score"), match_data.get("away_score"), 
+                    match_data.get("league_name"), 
+                    match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), 
+                    match_data.get("result")
+                ))
+                
+                # 2. Update (in case it existed and we have new result)
+                # We only really care about updating score/result.
+                if match_data.get("result") or match_data.get("home_score") is not None:
+                     c.execute("""
+                        UPDATE matches_historical 
+                        SET home_score=?, away_score=?, result=? 
+                        WHERE game_id=?
+                     """, (match_data.get("home_score"), match_data.get("away_score"), match_data.get("result"), match_data.get("game_id")))
+                
+                if self.engine_type == 'sqlite': self.get_connection().commit()
+            except Exception as e:
+                logger.error(f"Save Match Data Error: {e}")
+            finally:
+                if self.engine_type == 'sqlite': c.close()
+
         else:
-            # Postgres Upsert
+            # Postgres Upsert (Standard)
             self.execute_query("""
                 INSERT INTO matches_historical (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -183,17 +205,21 @@ class OddsBreakerDB:
             ))
         
         if deep_data:
-            self.execute_query("INSERT INTO features_deep_data (game_id, home_attack_strength) VALUES (%s, %s) ON CONFLICT(game_id) DO NOTHING", (match_data.get("game_id"), 1.0))
+            # Simple ignore for deep data features
+            q = "INSERT INTO features_deep_data (game_id, home_attack_strength) VALUES (%s, %s)" if self.engine_type == 'postgres' else "INSERT OR IGNORE INTO features_deep_data (game_id, home_attack_strength) VALUES (?, ?)"
+            self.execute_query(q, (match_data.get("game_id"), 1.0))
 
     def place_bet(self, game_id, selection, odds, stake, ev, is_auto=False):
         self.execute_query("INSERT INTO bets_history (game_id, selection, odds, stake, expected_value, is_auto_bet) VALUES (%s, %s, %s, %s, %s, %s)", (game_id, selection, odds, stake, ev, is_auto))
 
     def get_pending_bets(self):
-        return self.execute_query("SELECT b.bet_id, b.game_id, b.selection, b.odds, b.stake, m.result, m.home_team, m.away_team FROM bets_history b JOIN matches_historical m ON b.game_id = m.game_id WHERE b.status = 'PENDING'", fetch=True) or []
+        # LEFT JOIN -> If match data missing, still show bet
+        return self.execute_query("SELECT b.bet_id, b.game_id, b.selection, b.odds, b.stake, m.result, m.home_team, m.away_team FROM bets_history b LEFT JOIN matches_historical m ON b.game_id = m.game_id WHERE b.status = 'PENDING'", fetch=True) or []
     
     def get_recent_bets(self, limit=20):
         # Returns ALL bets (Pending + Won + Lost) ordered by time
-        return self.execute_query(f"SELECT b.bet_id, b.game_id, b.selection, b.odds, b.stake, b.status, m.home_team, m.away_team, b.pnl FROM bets_history b JOIN matches_historical m ON b.game_id = m.game_id ORDER BY b.bet_id DESC LIMIT {limit}", fetch=True) or []
+        # LEFT JOIN is CRITICAL here. If matches_historical insert failed, we MUST still ensure the bet is visible.
+        return self.execute_query(f"SELECT b.bet_id, b.game_id, b.selection, b.odds, b.stake, b.status, m.home_team, m.away_team, b.pnl FROM bets_history b LEFT JOIN matches_historical m ON b.game_id = m.game_id ORDER BY b.bet_id DESC LIMIT {limit}", fetch=True) or []
 
     def resolve_bet(self, bet_id, result_status, pnl):
         self.execute_query("UPDATE bets_history SET status = %s, pnl = %s WHERE bet_id = %s", (result_status, pnl, bet_id))
