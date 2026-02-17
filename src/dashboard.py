@@ -434,20 +434,26 @@ elif menu == "🤖 AUTO-BET & LEARN":
     abm = AutoBetManager()
     
     # Stats Row
-    stats = abm.db.get_bets_stats() 
-    # (total_bets, wins, profit, avg_odds)
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Apuestas Totales", stats[0])
-    wins = stats[1] if stats[1] else 0
-    total = stats[0] if stats[0] else 1
-    win_rate = (wins / total) * 100
-    col2.metric("Win Rate Real", f"{win_rate:.1f}%")
-    profit = stats[2] if stats[2] else 0.0
-    col3.metric("Beneficio / Pérdida", f"${profit:.2f}", delta_color="normal")
-    col4.metric("Aprendizaje", "ACTIVO", delta="Online Learning")
-    
-    st.divider()
+    try:
+        stats = abm.db.get_bets_stats() 
+        # (total_bets, wins, profit, avg_odds)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Apuestas Totales", stats[0])
+        wins = stats[1] if stats[1] else 0
+        total = stats[0] if stats[0] else 1
+        win_rate = (wins / total) * 100
+        col2.metric("Win Rate Real", f"{win_rate:.1f}%")
+        profit = stats[2] if stats[2] else 0.0
+        col3.metric("Beneficio / Pérdida", f"${profit:.2f}", delta_color="normal")
+        col4.metric("Aprendizaje", "ACTIVO", delta="Online Learning")
+        
+        st.divider()
+    except Exception as e:
+        stats = (0, 0, 0, 0)
+        st.error(f"⚠️ Error conectando a Base de Datos: {e}")
+        st.warning("Verifica tus secretos en Streamlit Cloud ([postgres] url = ...).")
+        st.stop()
     
     c1, c2 = st.columns(2)
     
