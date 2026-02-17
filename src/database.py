@@ -95,17 +95,32 @@ class OddsBreakerDB:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Adapt query for SQLite if needed (simple replacements)
+            # Adapt query for SQLite
             if self.engine_type == 'sqlite':
-                query = query.replace('%s', '?').replace('SERIAL PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT')
+                query = query.replace('%s', '?')
+                query = query.replace('SERIAL PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT')
                 query = query.replace('TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'DATETIME DEFAULT CURRENT_TIMESTAMP')
-                query = query.replace('ON CONFLICT (game_id) DO UPDATE SET', 'ON CONFLICT(game_id) DO UPDATE SET') # formatting
+                # Fix ON CONFLICT syntax for SQLite (simplified)
+                if "ON CONFLICT" in query and "excluded." in query:
+                    # Replace Postgres 'excluded.' with SQLite 'excluded.' (case sensitive in some versions?)
+                    # Actually, standard SQLite uses 'excluded.col'.
+                    # Just ensure we don't have artifacts.
+                    pass
+                
+                # Sanitize Params for SQLite (Datetime -> Str)
+                if params:
+                    new_params = []
+                    for p in params:
+                        if isinstance(p, (datetime.datetime, datetime.date)):
+                            new_params.append(str(p))
+                        else:
+                            new_params.append(p)
+                    params = tuple(new_params)
 
             cursor.execute(query, params or ())
             
             if fetch:
                 res = cursor.fetchall()
-                # Unpack sqlite3.Row for consistency
                 if self.engine_type == 'sqlite':
                     return [tuple(r) for r in res]
                 return res
@@ -113,6 +128,15 @@ class OddsBreakerDB:
             conn.commit()
         except Exception as e:
             logger.error(f"Query Error ({self.engine_type}): {e}")
+            # VISIBLE ERROR FOR USER
+            try:
+                import streamlit as st
+                # Only show unique errors to avoid spam
+                if "query_error_displayed" not in st.session_state:
+                    st.toast(f"⚠️ DB Error: {e}", icon="🔥")
+                    st.session_state.query_error_displayed = True
+            except: pass
+            
             if conn: conn.rollback()
             return [] if fetch else None
         finally:
@@ -156,18 +180,36 @@ class OddsBreakerDB:
         for q in queries: self.execute_query(q)
 
     def save_match_data(self, match_data: dict, deep_data: dict = None):
-        self.execute_query("""
-            INSERT INTO matches_historical (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (game_id) DO UPDATE SET home_score = excluded.home_score, away_score = excluded.away_score, result = excluded.result
-        """.replace("excluded.", "EXCLUDED." if self.engine_type == 'postgres' else ""), (
-             match_data.get("game_id"), match_data.get("date"), 
-             match_data.get("home_team"), match_data.get("away_team"), 
-             match_data.get("home_score"), match_data.get("away_score"), 
-             match_data.get("league_name"), 
-             match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), 
-             match_data.get("result")
-        ))
+        # Robust Upsert
+        if self.engine_type == 'sqlite':
+             # SQLite Upsert
+             self.execute_query("""
+                INSERT INTO matches_historical (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT(game_id) DO UPDATE SET 
+                home_score=excluded.home_score, away_score=excluded.away_score, result=excluded.result
+             """, (
+                 match_data.get("game_id"), match_data.get("date"), 
+                 match_data.get("home_team"), match_data.get("away_team"), 
+                 match_data.get("home_score"), match_data.get("away_score"), 
+                 match_data.get("league_name"), 
+                 match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), 
+                 match_data.get("result")
+             ))
+        else:
+            # Postgres Upsert
+            self.execute_query("""
+                INSERT INTO matches_historical (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (game_id) DO UPDATE SET home_score = EXCLUDED.home_score, away_score = EXCLUDED.away_score, result = EXCLUDED.result
+            """, (
+                 match_data.get("game_id"), match_data.get("date"), 
+                 match_data.get("home_team"), match_data.get("away_team"), 
+                 match_data.get("home_score"), match_data.get("away_score"), 
+                 match_data.get("league_name"), 
+                 match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), 
+                 match_data.get("result")
+            ))
         
         # Stub for deep data to prevent crash
         if deep_data:
@@ -178,6 +220,10 @@ class OddsBreakerDB:
 
     def get_pending_bets(self):
         return self.execute_query("SELECT b.bet_id, b.game_id, b.selection, b.odds, b.stake, m.result, m.home_team, m.away_team FROM bets_history b JOIN matches_historical m ON b.game_id = m.game_id WHERE b.status = 'PENDING'", fetch=True) or []
+    
+    def get_recent_bets(self, limit=20):
+        # Returns ALL bets (Pending + Won + Lost) ordered by time
+        return self.execute_query(f"SELECT b.bet_id, b.game_id, b.selection, b.odds, b.stake, b.status, m.home_team, m.away_team, b.pnl FROM bets_history b JOIN matches_historical m ON b.game_id = m.game_id ORDER BY b.bet_id DESC LIMIT {limit}", fetch=True) or []
 
     def resolve_bet(self, bet_id, result_status, pnl):
         self.execute_query("UPDATE bets_history SET status = %s, pnl = %s WHERE bet_id = %s", (result_status, pnl, bet_id))
