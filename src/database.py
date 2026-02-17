@@ -28,24 +28,51 @@ class OddsBreakerDB:
 
     def initialize_pool(self):
         try:
-            self.postgreSQL_pool = psycopg2.pool.SimpleConnectionPool(
-                1, 20,
-                user=os.getenv("DB_USER", "postgres"),
-                password=os.getenv("DB_PASS", "admin"),
-                host=os.getenv("DB_HOST", "localhost"),
-                port=os.getenv("DB_PORT", "5432"),
-                database=os.getenv("DB_NAME", "odds_breaker")
-            )
+            # Try to get connection string from multiple sources
+            dsn = None
+            
+            # 1. Streamlit Secrets (Recommended for Cloud)
+            try:
+                import streamlit as st
+                if "postgres" in st.secrets:
+                    # Check for 'url' key or simple string
+                    if isinstance(st.secrets["postgres"], dict) and "url" in st.secrets["postgres"]:
+                        dsn = st.secrets["postgres"]["url"]
+                    elif isinstance(st.secrets["postgres"], str):
+                        dsn = st.secrets["postgres"]
+            except Exception:
+                pass # Streamlit not installed or no secrets
+
+            # 2. Environment Variable (Standard)
+            if not dsn:
+                dsn = os.getenv("DATABASE_URL")
+            
+            if dsn:
+                self.postgreSQL_pool = psycopg2.pool.SimpleConnectionPool(1, 20, dsn, sslmode='require')
+                logger.info("Connected to DB via URL/DSN.")
+            else:
+                # 3. Individual Env Vars (Fallback / Local)
+                self.postgreSQL_pool = psycopg2.pool.SimpleConnectionPool(
+                    1, 20,
+                    user=os.getenv("DB_USER", "postgres"),
+                    password=os.getenv("DB_PASS", "admin"),
+                    host=os.getenv("DB_HOST", "localhost"),
+                    port=os.getenv("DB_PORT", "5432"),
+                    database=os.getenv("DB_NAME", "odds_breaker")
+                )
+                logger.info("Connected to DB via Env Vars.")
+
             if self.postgreSQL_pool:
-                logger.info("Connection pool created successfully")
                 self._initialized = True
         except (Exception, psycopg2.DatabaseError) as error:
             logger.error(f"Error while connecting to PostgreSQL: {error}")
             self._initialized = False
 
     def get_connection(self):
-        if not self._initialized:
+        if not self._initialized or not hasattr(self, 'postgreSQL_pool') or self.postgreSQL_pool is None:
             self.initialize_pool()
+        if not hasattr(self, 'postgreSQL_pool') or self.postgreSQL_pool is None:
+             raise Exception("Database connection failed. Please check your credentials.")
         return self.postgreSQL_pool.getconn()
 
     def return_connection(self, conn):
