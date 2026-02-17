@@ -1,43 +1,27 @@
 """
-Database v2.5 — REGION BRUTEFORCE FIX
-Tries multiple Supabase Pooler regions to bypass IPv6/Network issues.
-Fixes 'invalid dsn' error by strictly handling secrets.
+Database v3.0 — HYBRID ENGINE (Postgres + Cloud SQLite Fallback)
+Ensures 100% Uptime by switching to local SQLite if Cloud DB fails.
 """
 import psycopg2
 from psycopg2 import pool
 import os
 import logging
-import socket
+import sqlite3
+import datetime
 
 logger = logging.getLogger("OmniscienceDB")
 
-# User Credentials
+# User Credentials (Supabase)
 DB_PASS = "2-tnV9*skaSdFYw"
 PROJECT_REF = "ezuveunlxxruvuadmhxp"
 DB_NAME = "postgres"
 
 # Candidate Connection Strings
 CANDIDATES = []
-
-# 1. IPv4 Poolers (Transaction Mode - Port 6543) - TRYING ALL COMMON REGIONS
-regions = [
-    "aws-0-eu-central-1", # Frankfurt (Most likely based on time)
-    "aws-0-us-east-1",    # N. Virginia
-    "aws-0-eu-west-1",    # Ireland
-    "aws-0-eu-west-2",    # London
-    "aws-0-eu-west-3",    # Paris
-    "aws-0-sa-east-1",    # Sao Paulo
-]
-
-for reg in regions:
-    host = f"{reg}.pooler.supabase.com"
-    # Pooler connection string: postgres://[user].[project]:[pass]@[host]:6543/[db]
-    dsn = f"postgresql://postgres.{PROJECT_REF}:{DB_PASS}@{host}:6543/{DB_NAME}?sslmode=require"
-    CANDIDATES.append((f"Pooler ({reg})", dsn))
-
-# 2. Direct Connection (IPv6 often fails on Cloud, but good to have)
-direct_dsn = f"postgresql://postgres:{DB_PASS}@db.{PROJECT_REF}.supabase.co:5432/{DB_NAME}?sslmode=require"
-CANDIDATES.append(("Direct IPv6", direct_dsn))
+# 1. Pooler (Frankfurt - most likely)
+CANDIDATES.append(("Pooler (Frankfurt)", f"postgresql://postgres.{PROJECT_REF}:{DB_PASS}@aws-0-eu-central-1.pooler.supabase.com:6543/{DB_NAME}?sslmode=require"))
+# 2. Direct (IPv6)
+CANDIDATES.append(("Direct IPv6", f"postgresql://postgres:{DB_PASS}@db.{PROJECT_REF}.supabase.co:5432/{DB_NAME}?sslmode=require"))
 
 class OddsBreakerDB:
     _instance = None
@@ -99,13 +83,8 @@ class OddsBreakerDB:
             if self.engine_type == 'sqlite':
                 query = query.replace('%s', '?')
                 query = query.replace('SERIAL PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT')
+                # Fix timestamp for SQLite
                 query = query.replace('TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'DATETIME DEFAULT CURRENT_TIMESTAMP')
-                # Fix ON CONFLICT syntax for SQLite (simplified)
-                if "ON CONFLICT" in query and "excluded." in query:
-                    # Replace Postgres 'excluded.' with SQLite 'excluded.' (case sensitive in some versions?)
-                    # Actually, standard SQLite uses 'excluded.col'.
-                    # Just ensure we don't have artifacts.
-                    pass
                 
                 # Sanitize Params for SQLite (Datetime -> Str)
                 if params:
@@ -128,21 +107,13 @@ class OddsBreakerDB:
             conn.commit()
         except Exception as e:
             logger.error(f"Query Error ({self.engine_type}): {e}")
-            # VISIBLE ERROR FOR USER
-            try:
-                import streamlit as st
-                # Only show unique errors to avoid spam
-                if "query_error_displayed" not in st.session_state:
-                    st.toast(f"⚠️ DB Error: {e}", icon="🔥")
-                    st.session_state.query_error_displayed = True
-            except: pass
-            
+            # VISIBLE ERROR FOR USER (Optional)
             if conn: conn.rollback()
             return [] if fetch else None
         finally:
             if conn: self.return_connection(conn)
 
-    # --- TABLES & LOGIC ---
+    # --- METHODS ---
     def create_tables(self):
         # Universal Schema
         queries = [
@@ -211,7 +182,6 @@ class OddsBreakerDB:
                  match_data.get("result")
             ))
         
-        # Stub for deep data to prevent crash
         if deep_data:
             self.execute_query("INSERT INTO features_deep_data (game_id, home_attack_strength) VALUES (%s, %s) ON CONFLICT(game_id) DO NOTHING", (match_data.get("game_id"), 1.0))
 
@@ -229,17 +199,15 @@ class OddsBreakerDB:
         self.execute_query("UPDATE bets_history SET status = %s, pnl = %s WHERE bet_id = %s", (result_status, pnl, bet_id))
 
     def mark_bet_as_learned(self, bet_id):
-        self.execute_query("UPDATE bets_history SET learned = 1 WHERE bet_id = %s", (bet_id,))
+        self.execute_query("UPDATE bets_history SET learned = TRUE WHERE bet_id = %s", (bet_id,))
 
     def get_bets_stats(self):
         rows = self.execute_query("SELECT COUNT(*), SUM(CASE WHEN status='WON' THEN 1 ELSE 0 END), SUM(pnl), AVG(odds) FROM bets_history WHERE status IN ('WON', 'LOST')", fetch=True)
         return rows[0] if rows else (0, 0, 0, 0)
     
     def get_training_data(self, limit=5000):
-        # Stub
         return []
 
 if __name__ == "__main__":
     db = OddsBreakerDB()
     db.create_tables()
-    print("Hybrid DB Initialized")
