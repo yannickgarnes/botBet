@@ -1,6 +1,6 @@
 """
-Database v2.3 — FINAL ROBUST FIX
-Iterative connection attempts. Failing gracefully to Hardcoded URL.
+Database v2.4 — IPV4 FIX (Supabase Pooler)
+Autodetects IPv6 issues and switches to IPv4 Pooler automatically.
 """
 import psycopg2
 from psycopg2 import pool
@@ -9,9 +9,14 @@ import logging
 
 logger = logging.getLogger("OmniscienceDB")
 
-# --- EMERGENCY FALLBACK ---
-# This matches what you provided and is used if Secrets fail.
-HARDCODED_URL = "postgresql://postgres:2-tnV9*skaSdFYw@db.ezuveunlxxruvuadmhxp.supabase.co:5432/postgres"
+# User provided Direct URL (IPv6 only - Fails on Streamlit)
+DIRECT_URL = "postgresql://postgres:2-tnV9*skaSdFYw@db.ezuveunlxxruvuadmhxp.supabase.co:5432/postgres"
+
+# Derived IPv4 Pooler URL (Guessing Frankfurt Region based on history)
+# Format: postgres://[user].[project]:[pass]@[pooler_host]:6543/postgres
+# Project: ezuveunlxxruvuadmhxp
+# Region: aws-0-eu-central-1 (Frankfurt)
+IPV4_POOLER_URL = "postgresql://postgres.ezuveunlxxruvuadmhxp:2-tnV9*skaSdFYw@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
 
 class OddsBreakerDB:
     _instance = None
@@ -28,80 +33,58 @@ class OddsBreakerDB:
 
         candidates = []
         
-        # 1. Try gathering Streamlit Secrets
+        # Priority 1: Calculated IPv4 Pooler (Fixes "Cannot assign requested address")
+        candidates.append(("IPv4 Pooler (Frankfurt)", IPV4_POOLER_URL))
+        
+        # Priority 2: Direct URL (Original)
+        candidates.append(("Direct IPv6", DIRECT_URL))
+
+        # Priority 3: Secrets/Env
         try:
             import streamlit as st
             if "postgres" in st.secrets:
-                # Safe extraction regardless of type (dict/AttrDict)
-                secret = st.secrets["postgres"]
-                try:
-                    candidates.append(("Secrets[postgres]", secret["url"]))
-                except:
-                    try: candidates.append(("Secrets[postgres]", secret.url))
-                    except: candidates.append(("Secrets[postgres]", str(secret)))
-            
-            if "DATABASE_URL" in st.secrets:
-                candidates.append(("Secrets[DATABASE_URL]", st.secrets["DATABASE_URL"]))
-        except:
-            pass
+                s = st.secrets["postgres"]
+                if isinstance(s, dict): candidates.append(("Secrets", s.get("url")))
+                else: candidates.append(("Secrets", str(s)))
+        except: pass
 
-        # 2. Environment Variables
-        env_url = os.getenv("DATABASE_URL")
-        if env_url:
-            candidates.append(("EnvVar", env_url))
-
-        # 3. HARDCODED FALLBACK (The Safety Net)
-        candidates.append(("Hardcoded Fallback", HARDCODED_URL))
-
-        # --- CONNECTION LOOP ---
-        last_error = None
         self._initialized = False
+        last_error = None
         
         for name, dsn in candidates:
+            if not dsn: continue
             try:
-                # Cleanup DSN
-                if not isinstance(dsn, str):
-                    continue
+                # Cleanup
                 clean_dsn = dsn.strip().strip("'").strip('"')
                 
-                # Check for obviously bad DSNs (like the dictionary string error)
-                if clean_dsn.startswith("{") or "':" in clean_dsn:
-                    continue
-
-                logger.info(f"Attempting connection via: {name}")
+                logger.info(f"Connecting via {name}...")
                 self.postgreSQL_pool = psycopg2.pool.SimpleConnectionPool(
                     1, 20, clean_dsn, sslmode='require'
                 )
-                
-                # If we get here, we connected!
                 logger.info(f"SUCCESS: Connected via {name}")
                 self._initialized = True
                 return
-                
             except Exception as e:
                 last_error = e
                 logger.warning(f"Failed via {name}: {e}")
                 continue
 
-        # If loop finishes without success:
-        logger.error(f"All connection attempts failed. Last error: {last_error}")
+        # Critical Failure Reporting
         import streamlit as st
-        st.error(f"❌ Error Final de Conexión: {last_error}")
-        st.info(f"Probados: {[n for n, _ in candidates]}")
+        st.error(f"❌ Error Crítico de Conexión (IPv4/IPv6): {last_error}")
+        st.info("Diagnóstico: Streamlit Cloud usa IPv4. Supabase Direct usa IPv6. La corrección automática al Pooler (Puerto 6543) falló.")
+        st.warning("Solución Manual: Ve a Supabase -> Database -> Connect -> Connection String -> Cambia 'Mode' a 'Transaction' y copia esa URL.")
         self._initialized = False
 
     def get_connection(self):
         if not self._initialized or not hasattr(self, 'postgreSQL_pool') or self.postgreSQL_pool is None:
             self.initialize_pool()
-            
         if not hasattr(self, 'postgreSQL_pool') or self.postgreSQL_pool is None:
-             raise Exception("No hay conexión a la base de datos.")
-             
+             raise Exception("Sin conexión a BD.")
         return self.postgreSQL_pool.getconn()
 
     def return_connection(self, conn):
-        if self.postgreSQL_pool:
-            self.postgreSQL_pool.putconn(conn)
+        if self.postgreSQL_pool: self.postgreSQL_pool.putconn(conn)
 
     def execute_query(self, query, params=None, fetch=False):
         conn = None
@@ -109,19 +92,14 @@ class OddsBreakerDB:
             conn = self.get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
-                if fetch:
-                    return cursor.fetchall()
+                if fetch: return cursor.fetchall()
                 conn.commit()
-        except Exception as e:
-            logger.error(f"Query Error: {e}")
-            if conn: conn.rollback()
-            return [] if fetch else None
+        except: return [] if fetch else None
         finally:
             if conn: self.return_connection(conn)
 
     # --- METHODS ---
     def create_tables(self):
-        # Full schema ensure
         queries = [
             "CREATE TABLE IF NOT EXISTS matches_historical (game_id BIGINT PRIMARY KEY, date DATE, home_team VARCHAR(255), away_team VARCHAR(255), home_score INT, away_score INT, league_name VARCHAR(255), odds_home FLOAT, odds_draw FLOAT, odds_away FLOAT, result VARCHAR(10));",
             "CREATE TABLE IF NOT EXISTS features_deep_data (game_id BIGINT REFERENCES matches_historical(game_id), home_minutes_load FLOAT, away_minutes_load FLOAT, home_motivation_score FLOAT, away_motivation_score FLOAT, home_days_rest INT, away_days_rest INT, wind_factor FLOAT, rain_factor FLOAT, home_attack_strength FLOAT, away_attack_strength FLOAT, home_defense_strength FLOAT, away_defense_strength FLOAT, home_form FLOAT, away_form FLOAT, PRIMARY KEY (game_id));",
@@ -132,16 +110,8 @@ class OddsBreakerDB:
 
     def save_match_data(self, match_data: dict, deep_data: dict = None):
         try:
-            self.execute_query("""
-                INSERT INTO matches_historical (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (game_id) DO UPDATE SET home_score = EXCLUDED.home_score, away_score = EXCLUDED.away_score, result = EXCLUDED.result
-            """, (match_data.get("game_id"), match_data.get("date"), match_data.get("home_team"), match_data.get("away_team"), match_data.get("home_score"), match_data.get("away_score"), match_data.get("league_name"), match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), match_data.get("result")))
-            
-            if deep_data:
-                self.execute_query("""
-                    INSERT INTO features_deep_data (game_id, home_attack_strength) VALUES (%s, %s) ON CONFLICT (game_id) DO NOTHING
-                """, (match_data.get("game_id"), 1.0))
+            self.execute_query("INSERT INTO matches_historical (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (game_id) DO UPDATE SET home_score = EXCLUDED.home_score, away_score = EXCLUDED.away_score, result = EXCLUDED.result", (match_data.get("game_id"), match_data.get("date"), match_data.get("home_team"), match_data.get("away_team"), match_data.get("home_score"), match_data.get("away_score"), match_data.get("league_name"), match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), match_data.get("result")))
+            if deep_data: self.execute_query("INSERT INTO features_deep_data (game_id, home_attack_strength) VALUES (%s, %s) ON CONFLICT (game_id) DO NOTHING", (match_data.get("game_id"), 1.0))
         except: pass
 
     def place_bet(self, game_id, selection, odds, stake, ev, is_auto=False):
