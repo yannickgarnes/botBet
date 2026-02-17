@@ -53,7 +53,8 @@ class OddsBreakerDB:
         # 2. FALLBACK TO SQLITE (Local/Ephemeral)
         logger.warning("Falling back to SQLite")
         self.engine_type = 'sqlite'
-        self.sqlite_path = 'bets_history.db'
+        import os
+        self.sqlite_path = os.path.join(os.getcwd(), 'bets_history.db')
         self._initialized = True
 
     def get_connection(self):
@@ -236,4 +237,3 @@ class OddsBreakerDB:
 
 if __name__ == "__main__":
     db = OddsBreakerDB()
-    db.create_tables()
