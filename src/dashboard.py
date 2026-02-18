@@ -464,7 +464,7 @@ elif menu == "🤖 AUTO-BET & LEARN":
         st.subheader("1. Generación de Apuestas")
         st.info("Escaneará TODOS los partidos de HOY (incluso finalizados) para aprender rápido.")
         
-        threshold = st.slider("Umbral de Valor (EV)", 0.05, 0.50, 0.15)
+        threshold = st.slider("Umbral de Valor (EV)", 0.01, 0.50, 0.15)
         max_b = st.number_input("Máximo de Apuestas", 1, 50, 10)
         
         if st.button("🚀 EJECUTAR AUTO-BET (HOY)"):

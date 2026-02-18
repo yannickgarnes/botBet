@@ -106,7 +106,7 @@ class AutoBetManager:
                         
                     # GENERAL CORNER STRATEGY:
                     # High Attack Power (Implied > 2.0 goals) -> Over 8.5
-                    if features[0] > 1.8 or features[1] > 1.8: # Attack Strength
+                    if features[0] > 1.4 or features[1] > 1.4: # Attack Strength
                          # Bet Over 8.5 Corners (approx lines)
                          self._place_bet_safe(game_id, "Corners Over 8.5", 1.85, 0.1, is_auto=True)
                          bets_placed += 1
