@@ -65,10 +65,11 @@ class OddsBreakerDB:
             return self.postgreSQL_pool.getconn()
         else:
             # SQLite Connection (w/ Increased Timeout and WAL Mode for Concurrency)
-            conn = sqlite3.connect(self.sqlite_path, timeout=10.0, check_same_thread=False)
+            conn = sqlite3.connect(self.sqlite_path, timeout=30.0, check_same_thread=False)
             conn.row_factory = sqlite3.Row
-            # Enable WAL mode for better concurrency
+            # Enable WAL mode for better concurrency (Persistent)
             conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;") # Faster writes, slightly less safe but good for streamlit
             return conn
 
     def return_connection(self, conn):
@@ -157,13 +158,9 @@ class OddsBreakerDB:
     def save_match_data(self, match_data: dict, deep_data: dict = None):
         # Robust Upsert
         if self.engine_type == 'sqlite':
-            # SQLite Strategy: INSERT OR IGNORE then UPDATE (to avoid syntax errors on older versions)
-            # Or just REPLACE INTO (Simple, but keys might change? No, game_id is key).
-            # REPLACE INTO matches_historical ... works but might affect FKs if ON DELETE CASCADE.
-            # Safe approach: INSERT OR IGNORE, then UPDATE.
-            
-            c = self.get_connection().cursor()
+            conn = self.get_connection()
             try:
+                c = conn.cursor()
                 # 1. Try Insert
                 c.execute("""
                     INSERT OR IGNORE INTO matches_historical 
@@ -187,11 +184,12 @@ class OddsBreakerDB:
                         WHERE game_id=?
                      """, (match_data.get("home_score"), match_data.get("away_score"), match_data.get("result"), match_data.get("game_id")))
                 
-                if self.engine_type == 'sqlite': self.get_connection().commit()
+                conn.commit()
             except Exception as e:
                 logger.error(f"Save Match Data Error: {e}")
+                conn.rollback()
             finally:
-                if self.engine_type == 'sqlite': c.close()
+                self.return_connection(conn)
 
         else:
             # Postgres Upsert (Standard)
