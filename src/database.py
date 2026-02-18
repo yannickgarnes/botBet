@@ -1,6 +1,7 @@
 """
-Database v3.0 — HYBRID ENGINE (Postgres + Cloud SQLite Fallback)
+Database v3.1 — HYBRID ENGINE (Postgres + Cloud SQLite Fallback)
 Ensures 100% Uptime by switching to local SQLite if Cloud DB fails.
+CRITICAL FIX: Returns sqlite3.Row objects (Hybrid) to support both Dashboard (tuples) and Auto-Bet (dicts).
 """
 import psycopg2
 from psycopg2 import pool
@@ -18,9 +19,7 @@ DB_NAME = "postgres"
 
 # Candidate Connection Strings
 CANDIDATES = []
-# 1. Pooler (Frankfurt - most likely)
 CANDIDATES.append(("Pooler (Frankfurt)", f"postgresql://postgres.{PROJECT_REF}:{DB_PASS}@aws-0-eu-central-1.pooler.supabase.com:6543/{DB_NAME}?sslmode=require"))
-# 2. Direct (IPv6)
 CANDIDATES.append(("Direct IPv6", f"postgresql://postgres:{DB_PASS}@db.{PROJECT_REF}.supabase.co:5432/{DB_NAME}?sslmode=require"))
 
 class OddsBreakerDB:
@@ -69,7 +68,7 @@ class OddsBreakerDB:
             conn.row_factory = sqlite3.Row
             # Enable WAL mode for better concurrency (Persistent)
             conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;") # Faster writes, slightly less safe but good for streamlit
+            conn.execute("PRAGMA synchronous=NORMAL;") 
             return conn
 
     def return_connection(self, conn):
@@ -88,7 +87,6 @@ class OddsBreakerDB:
             if self.engine_type == 'sqlite':
                 query = query.replace('%s', '?')
                 query = query.replace('SERIAL PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT')
-                # Fix timestamp for SQLite
                 query = query.replace('TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'DATETIME DEFAULT CURRENT_TIMESTAMP')
                 
                 # Sanitize Params for SQLite (Datetime -> Str)
@@ -106,13 +104,12 @@ class OddsBreakerDB:
             if fetch:
                 res = cursor.fetchall()
                 if self.engine_type == 'sqlite':
-                    return [dict(r) for r in res]
+                    return res # RETURN RAW ROW OBJECTS (HYBRID)
                 return res
             
             conn.commit()
         except Exception as e:
             logger.error(f"Query Error ({self.engine_type}): {e}")
-            # VISIBLE ERROR FOR USER (Optional)
             if conn: conn.rollback()
             return [] if fetch else None
         finally:
@@ -120,7 +117,6 @@ class OddsBreakerDB:
 
     # --- METHODS ---
     def create_tables(self):
-        # Universal Schema
         queries = [
             """CREATE TABLE IF NOT EXISTS matches_historical (
                 game_id BIGINT PRIMARY KEY,
@@ -156,12 +152,10 @@ class OddsBreakerDB:
         for q in queries: self.execute_query(q)
 
     def save_match_data(self, match_data: dict, deep_data: dict = None):
-        # Robust Upsert
         if self.engine_type == 'sqlite':
             conn = self.get_connection()
             try:
                 c = conn.cursor()
-                # 1. Try Insert
                 c.execute("""
                     INSERT OR IGNORE INTO matches_historical 
                     (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
@@ -174,25 +168,19 @@ class OddsBreakerDB:
                     match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), 
                     match_data.get("result")
                 ))
-                
-                # 2. Update (in case it existed and we have new result)
-                # We only really care about updating score/result.
                 if match_data.get("result") or match_data.get("home_score") is not None:
                      c.execute("""
                         UPDATE matches_historical 
                         SET home_score=?, away_score=?, result=? 
                         WHERE game_id=?
                      """, (match_data.get("home_score"), match_data.get("away_score"), match_data.get("result"), match_data.get("game_id")))
-                
                 conn.commit()
             except Exception as e:
                 logger.error(f"Save Match Data Error: {e}")
                 conn.rollback()
             finally:
                 self.return_connection(conn)
-
         else:
-            # Postgres Upsert (Standard)
             self.execute_query("""
                 INSERT INTO matches_historical (game_id, date, home_team, away_team, home_score, away_score, league_name, odds_home, odds_draw, odds_away, result)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -205,9 +193,7 @@ class OddsBreakerDB:
                  match_data.get("odds_home"), match_data.get("odds_draw"), match_data.get("odds_away"), 
                  match_data.get("result")
             ))
-        
         if deep_data:
-            # Simple ignore for deep data features
             q = "INSERT INTO features_deep_data (game_id, home_attack_strength) VALUES (%s, %s)" if self.engine_type == 'postgres' else "INSERT OR IGNORE INTO features_deep_data (game_id, home_attack_strength) VALUES (?, ?)"
             self.execute_query(q, (match_data.get("game_id"), 1.0))
 
@@ -215,12 +201,10 @@ class OddsBreakerDB:
         self.execute_query("INSERT INTO bets_history (game_id, selection, odds, stake, expected_value, is_auto_bet) VALUES (%s, %s, %s, %s, %s, %s)", (game_id, selection, odds, stake, ev, is_auto))
 
     def get_pending_bets(self):
-        # LEFT JOIN -> If match data missing, still show bet
         return self.execute_query("SELECT b.bet_id, b.game_id, b.selection, b.odds, b.stake, m.result, m.home_team, m.away_team FROM bets_history b LEFT JOIN matches_historical m ON b.game_id = m.game_id WHERE b.status = 'PENDING'", fetch=True) or []
     
     def get_recent_bets(self, limit=20):
-        # Returns ALL bets (Pending + Won + Lost) ordered by time
-        # LEFT JOIN is CRITICAL here. If matches_historical insert failed, we MUST still ensure the bet is visible.
+        # Hybrid Access safe
         return self.execute_query(f"SELECT b.bet_id, b.game_id, b.selection, b.odds, b.stake, b.status, m.home_team, m.away_team, b.pnl FROM bets_history b LEFT JOIN matches_historical m ON b.game_id = m.game_id ORDER BY b.bet_id DESC LIMIT {limit}", fetch=True) or []
 
     def resolve_bet(self, bet_id, result_status, pnl):
