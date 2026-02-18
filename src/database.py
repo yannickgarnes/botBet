@@ -145,7 +145,7 @@ class OddsBreakerDB:
                 bet_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 game_id BIGINT REFERENCES matches_historical(game_id),
                 placed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                selection VARCHAR(10), odds FLOAT, stake FLOAT,
+                selection VARCHAR(50), odds FLOAT, stake FLOAT,
                 expected_value FLOAT,
                 status VARCHAR(20) DEFAULT 'PENDING',
                 pnl FLOAT DEFAULT 0.0,
