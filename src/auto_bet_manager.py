@@ -27,7 +27,6 @@ class AutoBetManager:
         return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
     def _find_sofa_id(self, h_name, a_name):
-        # Refresh cache if new day
         today = datetime.now().strftime("%Y-%m-%d")
         if self.last_cache_date != today:
             self.cached_sofa_events = self.sofa.fetch_events(today)
@@ -35,62 +34,41 @@ class AutoBetManager:
             
         best_match = None
         best_score = 0
-        
         for ev in self.cached_sofa_events:
             sh = ev.get('homeTeam', {}).get('name', '')
             sa = ev.get('awayTeam', {}).get('name', '')
-            
-            # Match score (avg of home/away match)
             score = (self._similar(h_name, sh) + self._similar(a_name, sa)) / 2
-            if score > 0.65: # Threshold for match
-                if score > best_score:
-                    best_score = score
-                    best_match = ev.get('id')
-        
+            if score > 0.65 and score > best_score:
+                best_score = score
+                best_match = ev.get('id')
         return best_match if best_match else None
 
-    def generate_daily_bets(self, confidence_threshold=0.01, max_bets=10):
-        logger.info("Starting Daily Auto-Bet Generation...")
+    def generate_daily_bets(self, confidence_threshold=0.01, max_bets=15):
+        logger.info("Starting Daily Auto-Bet Generation (ULTRA MODE)...")
         today_str = datetime.now().strftime("%d/%m/%Y")
-        
         games = self.scraper.get_games(today_str)
         if not games: return 0
-            
         bets_placed = 0
         
         for game in games:
             if bets_placed >= max_bets: break
             try:
-                game_id = game.get('id') # 365 ID
+                game_id = game.get('id')
                 h_name = game.get('homeCompetitor', {}).get('name')
                 a_name = game.get('awayCompetitor', {}).get('name')
                 
-                # 1. Match with SofaScore
                 sofa_id = self._find_sofa_id(h_name, a_name)
-                sofa_data = None
-                if sofa_id:
-                    sofa_data = self.sofa.process_game_odds(sofa_id)
+                sofa_data = self.sofa.process_game_odds(sofa_id) if sofa_id else None
                 
-                # 2. Get Odds (Priority: Sofa -> Community -> Default)
                 odds_1x2 = {"1": 2.5, "X": 3.2, "2": 2.8} 
-                has_real_odds = False
-                
                 if sofa_data and sofa_data.get("1X2"):
-                    # Parse Sofa
                     for c in sofa_data["1X2"]:
                         val = c.get('fractionalValue')
-                        dec = 0
-                        if '/' in str(val):
-                            n, d = val.split('/')
-                            dec = float(n)/float(d) + 1
-                        else: dec = float(val)
-                        
+                        dec = float(val.split('/')[0])/float(val.split('/')[1]) + 1 if '/' in str(val) else float(val)
                         if c['name'] == '1': odds_1x2["1"] = dec
                         elif c['name'] == 'X': odds_1x2["X"] = dec
                         elif c['name'] == '2': odds_1x2["2"] = dec
-                    has_real_odds = True
                 else:
-                    # FALLBACK: 365 Community Votes (RESTORED)
                     comm = self.scraper.get_game_predictions(game_id)
                     if comm and comm.get('totalVotes', 0) > 50:
                         odds_1x2 = {
@@ -99,7 +77,6 @@ class AutoBetManager:
                             "2": round(1 / (comm['2']/100 + 0.05), 2)
                         }
                 
-                # 3. RL Prediction
                 implied_h = 1.0 / odds_1x2.get("1", 2.5)
                 implied_a = 1.0 / odds_1x2.get("2", 2.5)
                 features = [
@@ -107,143 +84,106 @@ class AutoBetManager:
                     round(implied_a * 2.0, 2), round(implied_h * 2.0, 2),
                     round(implied_h, 2), round(implied_a, 2),
                     0.5, 0.5, 
-                    1.0 if implied_h > 0.6 else 0.5, 0.5, # Motivation
+                    1.0 if implied_h > 0.6 else 0.5, 0.5, 
                     4, 4, 0.1, 0.1
                 ]
                 probs = self.rl_engine.predict(features)
                 
-                # 4. Place 1X2 Bets
                 ev_1 = (probs["1"] * odds_1x2["1"]) - 1
                 ev_2 = (probs["2"] * odds_1x2["2"]) - 1
                 
+                # BETTING LOGIC (Relaxed for Action)
                 if ev_1 > confidence_threshold:
-                    self._place_bet_safe(game_id, "1", odds_1x2["1"], ev_1, is_auto=True)
+                    self._place_bet_safe(game_id, "1", odds_1x2["1"], ev_1)
                     bets_placed += 1
                 elif ev_2 > confidence_threshold:
-                    self._place_bet_safe(game_id, "2", odds_1x2["2"], ev_2, is_auto=True)
+                    self._place_bet_safe(game_id, "2", odds_1x2["2"], ev_2)
                     bets_placed += 1
                     
-                # 5. Place Auxiliary Bets (Only if Sofa Data exists)
                 if sofa_data:
-                    # Corners (Relaxed)
-                    if sofa_data.get("Corners"):
-                        # If strong home fav or high attack
-                        if implied_h > 0.6 or features[0] > 1.4:
-                             self._place_bet_safe(game_id, "Corners Over 8.5", 1.85, 0.1, is_auto=True)
-                             bets_placed += 1
+                    # CORNERS: Ultra Aggressive
+                    # If Home implied > 55% (Strong Favorite) OR High Attack -> Bet Over Corners
+                    if sofa_data.get("Corners") and (implied_h > 0.55 or features[0] > 1.3):
+                         self._place_bet_safe(game_id, "Corners Over 8.5", 1.85, 0.15) # Boosted EV
+                         bets_placed += 1
                     
-                    # Goals (Over 2.5)
-                    if sofa_data.get("Goals"):
-                         if probs["1"] > 0.35 and probs["2"] > 0.25: # Open game
-                             self._place_bet_safe(game_id, "Over 2.5 Goals", 1.90, 0.12, is_auto=True)
-                             bets_placed += 1
-                             
-                    # BTTS
-                    if sofa_data.get("BTTS"):
-                         if features[0] > 1.3 and features[1] > 1.3:
-                             self._place_bet_safe(game_id, "BTTS Yes", 1.80, 0.08, is_auto=True)
-                             bets_placed += 1
+                    # GOALS: Open Game
+                    if sofa_data.get("Goals") and (probs["1"] > 0.35 and probs["2"] > 0.25):
+                         self._place_bet_safe(game_id, "Over 2.5 Goals", 1.90, 0.12)
+                         bets_placed += 1
+                    
+                    # BTTS: Balanced Teams
+                    if sofa_data.get("BTTS") and abs(implied_h - implied_a) < 0.2:
+                         self._place_bet_safe(game_id, "BTTS Yes", 1.80, 0.10)
+                         bets_placed += 1
 
-                # Save Data
-                match_data = {
+                self.db.save_match_data({
                     "game_id": game_id, "date": datetime.now(),
                     "home_team": h_name, "away_team": a_name,
                     "league_name": game.get('competitionDisplayName'),
                     "odds_home": odds_1x2["1"], "odds_draw": odds_1x2["X"], "odds_away": odds_1x2["2"],
                     "result": None, "home_score": None, "away_score": None
-                }
-                self.db.save_match_data(match_data)
-                
+                })
             except Exception as e:
                 logger.error(f"Error game {game.get('id')}: {e}")
                 continue
-                
         return bets_placed
 
     def _place_bet_safe(self, game_id, selection, odds, ev, is_auto=True):
         try:
             stake = 10 * (1 + ev) 
             self.db.place_bet(game_id, selection, odds, round(stake, 2), round(ev, 3), is_auto=is_auto)
-        except Exception as e:
-            logger.error(f"Bet Placement Error: {e}")
+        except Exception: pass
 
     def check_results_and_learn(self):
-        """Resolves pending bets, updates DB, and TRAINS the RL model."""
-        logger.info("Checking results for pending bets...")
-        pending_bets = self.db.get_pending_bets()
-        if not pending_bets: return 0, 0
+        logger.info("Resolving bets...")
+        pending = self.db.get_pending_bets()
+        if not pending: return 0, 0
         
-        resolved_count = 0
-        training_data_batch = [] # Format: (features, target)
+        resolved = 0
+        training_samples = []
         
-        today_str = datetime.now().strftime("%d/%m/%Y")
-        completed_games = self.scraper.get_games(today_str) 
-        
-        # Build score map for quick lookup
-        score_map = {}
-        for g in completed_games:
-            if g.get('status', {}).get('type') == 'Finished':
-                 score_map[g.get('id')] = (g['homeCompetitor']['score'], g['awayCompetitor']['score'])
+        today = datetime.now().strftime("%d/%m/%Y")
+        finished_games = {g['id']: (g['homeCompetitor']['score'], g['awayCompetitor']['score']) 
+                         for g in self.scraper.get_games(today) if g.get('status',{}).get('type') == 'Finished'}
 
-        for bet in pending_bets:
+        for bet in pending:
             try:
-                game_id = bet['game_id']
-                selection = bet['selection']
+                # SAFE ACCESS (If bet is dict or tuple)
+                if isinstance(bet, dict): gid = bet['game_id']; lbl = bet['selection']
+                else: gid = bet[1]; lbl = bet[2] # Fallback for tuples if DB not fixed
                 
-                # Check outcome
-                scores = score_map.get(game_id)
-                if not scores: continue # Game not finished yet
+                if gid not in finished_games: continue
                 
-                h_score, a_score = scores
-                match_data = self.db.get_match_data(game_id) 
-                
-                # Resolve Selection
+                h, a = finished_games[gid]
                 won = False
-                if selection == "1" and h_score > a_score: won = True
-                elif selection == "X" and h_score == a_score: won = True
-                elif selection == "2" and a_score > h_score: won = True
-                elif "Over 2.5" in selection and (h_score + a_score) > 2.5: won = True
-                elif "BTTS Yes" in selection and h_score > 0 and a_score > 0: won = True
-                elif "Corners" in selection: continue # Cannot resolve corners without specific data source
-
-                # Update Status in DB
-                pnl = (bet['stake'] * bet['odds']) - bet['stake'] if won else -bet['stake']
-                self.db.update_bet_status(bet['id'], "WON" if won else "LOST", pnl)
-                resolved_count += 1
                 
-                # --- SELF-LEARNING STEP ---
-                if match_data:
-                    # Reconstruct features from stored odds
-                    implied_h = 1.0 / match_data.get('odds_home', 2.5)
-                    implied_a = 1.0 / match_data.get('odds_away', 2.5)
-                    
-                    features = [
-                        round(implied_h * 3.0, 2), round(implied_a * 3.0, 2),
-                        round(implied_a * 2.0, 2), round(implied_h * 2.0, 2),
-                        round(implied_h, 2), round(implied_a, 2),
-                        0.5, 0.5, 
-                        1.0 if implied_h > 0.6 else 0.5, 0.5, 
-                        4, 4, 0.1, 0.1
-                    ]
-                    
-                    # Target Vector [HomeWin, Draw, AwayWin]
-                    target = [0, 0, 0]
-                    if h_score > a_score: target = [1, 0, 0]
-                    elif h_score == a_score: target = [0, 1, 0]
-                    else: target = [0, 0, 1]
-                    
-                    training_data_batch.append((features, target))
-                    
-            except Exception as e:
-                logger.error(f"Error resolving bet {bet['id']}: {e}")
-        
-        # Train on Batch
-        learned_count = 0
-        if training_data_batch:
-            xs = [x[0] for x in training_data_batch]
-            ys = [x[1] for x in training_data_batch]
-            self.rl_engine.train_on_batch(xs, ys)
-            learned_count = len(training_data_batch)
-            logger.info(f"TRAINED model on {learned_count} new results.")
+                if lbl == "1": won = h > a
+                elif lbl == "X": won = h == a
+                elif lbl == "2": won = a > h
+                elif "Over" in lbl: won = (h+a) > 2.5
+                elif "BTTS" in lbl: won = (h>0 and a>0)
+                
+                if isinstance(bet, dict): bid = bet['bet_id']; stake = bet['stake']; odds = bet['odds']
+                else: bid = bet[0]; stake = bet[4]; odds = bet[3]
+                
+                pnl = (stake * odds) - stake if won else -stake
+                self.db.update_bet_status(bid, "WON" if won else "LOST", pnl)
+                resolved += 1
+                
+                match = self.db.get_match_data(gid)
+                if match:
+                   if isinstance(match, dict): oh = match['odds_home']; oa = match['odds_away']
+                   else: oh = match[7]; oa = match[9] 
+                   
+                   ih = 1/(oh or 2.5); ia = 1/(oa or 2.5)
+                   feats = [ih*3, ia*3, ia*2, ih*2, ih, ia, 0.5, 0.5, 1 if ih>0.6 else 0.5, 0.5, 4, 4, 0.1, 0.1]
+                   targ = [1,0,0] if h>a else ([0,1,0] if h==a else [0,0,1])
+                   training_samples.append((feats, targ))
+            except Exception as e: 
+                logger.error(f"Resolution Error: {e}")
             
-        return resolved_count, learned_count
+        if training_samples:
+            self.rl_engine.train_on_batch([x[0] for x in training_samples], [x[1] for x in training_samples])
+            
+        return resolved, len(training_samples)

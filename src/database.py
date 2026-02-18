@@ -106,7 +106,7 @@ class OddsBreakerDB:
             if fetch:
                 res = cursor.fetchall()
                 if self.engine_type == 'sqlite':
-                    return [tuple(r) for r in res]
+                    return [dict(r) for r in res]
                 return res
             
             conn.commit()
