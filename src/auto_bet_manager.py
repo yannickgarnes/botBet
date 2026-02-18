@@ -185,5 +185,7 @@ class AutoBetManager:
             
         if training_samples:
             self.rl_engine.train_on_batch([x[0] for x in training_samples], [x[1] for x in training_samples])
+            self.rl_engine.save_model() # PERSIST KNOWLEDGE
+            logger.info("Model trained and SAVED.")
             
         return resolved, len(training_samples)
